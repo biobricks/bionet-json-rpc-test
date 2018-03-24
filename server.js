@@ -6,22 +6,41 @@ var fs = require('fs');
 var http = require('http');
 var router = require('routes')(); // server side router
 var jayson = require('jayson');
+var rpc = require('rpc-multistream');
 
-var jsonRPC = jayson.server({
+var jsonRPC = jayson.server(unstreamify({
 
   foo: function(f, cb) {
     cb(null, f + ": bar");
   },
 
-  bar: function(a, cb) {
-    cb(null, fs.createReadStream('./server.js', {encoding: 'utf8'}));
+  bar: rpc.syncReadStream(function(a) {
+    return fs.createReadStream('./server.js', {encoding: 'utf8'});
+  }),
+
+  baz: function(a, cb) {
+    cb(null, 'lol', fs.createReadStream('./server.js', {encoding: 'utf8'}));
   }
 
-}).middleware();
+})).middleware();
 
 function streamToArray(s, cb) {
-  // TODO implement
-  cb(null, s);
+  var onlyStrings = true;
+  var data = [];
+  s.on('data', function(d) {
+    data.push(d);
+    if(typeof d !== 'string') {
+      onlyStrings = false;
+    }
+  });
+  s.on('end', function() {
+    if(onlyStrings) {
+      cb(null, data.join(''));
+    } else {
+      cb(null, data);
+    }
+  })
+  s.on('error', cb);
 }
 
 function unstreamifyResult(res, cb) {
@@ -29,13 +48,16 @@ function unstreamifyResult(res, cb) {
     streamToArray(res, cb);
   }
   if(res instanceof Array) {
-    async.eachOf(res, i, function(item, next) {
+    async.eachOf(res, function(item, i, next) {
       if(item instanceof stream.Readable) {
         streamToArray(item, function(err, item) {
           if(err) return next(err);
           
           res[i] = item;
+          next();
         });
+      } else {
+        next();
       }
     }, function(err) {
       if(err) return cb(err);
@@ -61,8 +83,8 @@ function unstreamifyFunction(f) {
     var args = Array.prototype.slice.call(arguments, 0, arguments.length-1);
 
     if(f._rpcOpts) { // is this an rpc-multistream syncStream function?
-      if(f._rpcOpts.type !== 'r') {
-        return cb(new Error("Functions returning a write stream or duplex stream are not supported over the JSON-RPC 2.0 API"));
+      if(f._rpcOpts.type === 'w') {
+        return cb(new Error("Functions returning a write stream over the JSON-RPC 2.0 API"));
       }
 
       res = f.apply(null, args);
@@ -71,6 +93,10 @@ function unstreamifyFunction(f) {
     } else {
 
       args[args.length] = function() {
+        if(arguments.length && arguments[0]) {
+          return cb(arguments[0]);
+        }
+
         var cbArgs = Array.prototype.slice.call(arguments, 0); // convert to array
         
         unstreamifyResult(cbArgs, cb);

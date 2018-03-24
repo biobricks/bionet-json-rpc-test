@@ -33,5 +33,8 @@ def main():
     res = bionet.bar('sfa')
     print res
 
+    res = bionet.baz('sfa')
+    print res
+
 if __name__ == "__main__":
     main()
