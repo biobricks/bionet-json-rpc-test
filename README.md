@@ -8,7 +8,7 @@ JSON-RPC example code and python client for integration with the bionet.
 ## javascript
 
 ```
-npm install routes jayson
+npm install routes jayson async
 ```
 
 ## python

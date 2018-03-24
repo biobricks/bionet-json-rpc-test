@@ -8,7 +8,7 @@ def manual():
     import requests
     import json
 
-    url = "http://localhost:2000/RPC/foo"
+    url = "http://localhost:3000/RPC/foo"
     headers = {'content-type': 'application/json'}
 
     # Example echo method
@@ -25,9 +25,12 @@ def manual():
     
 def main():
 
-    bionet = Server('http://localhost:2000/rpc')
+    bionet = Server('http://localhost:3000/rpc')
 
     res = bionet.foo('lol')
+    print res
+
+    res = bionet.bar('sfa')
     print res
 
 if __name__ == "__main__":
