@@ -37,12 +37,10 @@ function login(res, username, password, cb) {
     cb(null, token);
   });
 }
-var foo;
 
-var jsonRPC = jayson.server(foo = unstreamify(login, {
+var jsonRPC = jayson.server(unstreamify(login, {
 
   foo: function(curUser, f, cb) {
-    console.log("ARGS:", arguments);
     cb(null, f + ": bar", null, 3);
   },
 
@@ -72,7 +70,6 @@ var jsonRPC = jayson.server(foo = unstreamify(login, {
 
 })).middleware();
 
-console.log(Object.keys(foo));
 
 // inject a new first argument into a JSON-RPC call object
 function injectFirstArg(obj, arg) {
@@ -81,7 +78,7 @@ function injectFirstArg(obj, arg) {
   } else {
     obj.params = [arg].concat(obj.params);
   }
-  console.log("OBJECT:", obj);
+
   return obj;
 }
 
@@ -139,7 +136,6 @@ function unstreamifyFunction(f, group) {
     if(group) {
       var userData = args[0];
 
-      console.log("USER DATA:", userData);
       if(!userData) {
         return cb(jsonError(new Error("You must be logged in to access this function"), 401));
       }
@@ -215,53 +211,88 @@ var server = http.createServer(function(req, res) {
   m.fn(req, res, m);
 });
 
+// return a plain http error
+function httpError(res, err, code) {
+  res.setHeader("Content-Type", "text/plain");
+  res.statusCode = code || 500;
+  if(typeof err === 'string') {
+    res.end(err);
+  } else if(typeof err === 'object' && err.message) {
+    res.end(err.message);
+  } else {
+    res.end("Unknown error");
+  }
+}
 
-router.addRoute('/rpc', function(req, res, match) {
-//  res.end("<html><body>RPC</body></html>");
-  var data = '';
-  req.on('data', function(d) {
-    data += d;
-  })
+function rpcRoute(authFunc) {
 
-  req.on('error', function(err) {
-    // TODO how to handle this?
-    console.error(err);
-  });
+  return function(req, res, match) {
 
-  req.on('end', function() {
-    if(!data) {
-      // TODO send proper http response code
-      res.end("Bad request: Missing request body");
-      return;
-    }
-    data = JSON.parse(data);
-    if(!data) {
-      // TODO invalid 
-      res.end("Bad request: Invalid JSON");
-      return;
-    }    
+    var data = '';
+    req.on('data', function(d) {
+      data += d;
+    })
 
-    // TODO we shouldn't do this if not using auth at all
-    if(data.method === 'login') {
-      data = injectFirstArg(data, res);
-      req.body = data;
-      jsonRPC(req, res);
-      return;
-    }
+    req.on('error', function(err) {
+      httpError(res, err);
+    });
 
-    myAuth(req, function(err, tokenData) {
-      if(err) {
-        data = injectFirstArg(data, null);
-      } else {
-        data = injectFirstArg(data, tokenData);
+    req.on('end', function() {
+      if(!data) {
+        httpError(res, "Bad request: Missing request body", 400);
+        return;
+      }
+      data = JSON.parse(data);
+      if(!data) {
+        httpError(res, "Bad request: Invalid JSON", 400);
+        return;
+      }    
+
+      function postAuth(err, userData) {        
+        if(err) {
+          data = injectFirstArg(data, null);
+        } else {
+          data = injectFirstArg(data, userData);
+        }
+        
+        req.body = data;
+        jsonRPC(req, res);
       }
 
-      req.body = data;
-      jsonRPC(req, res);
+      if(authFunc) {
+        if(data.method === 'login') {
+          data = injectFirstArg(data, res);
+          req.body = data;
+          jsonRPC(req, res);
+          return;
+        }
+        if(typeof authFunc !== 'function') {
+          myAuth(req, data, postAuth);
+          return;
+        }
+
+        myAuth(req, function(err, tokenData) {
+          authFunc(err, tokenData, postAuth);
+        });
+
+      } else {
+        req.body = data;
+        jsonRPC(req, res); 
+      }
 
     });
-  });
-});
+  }
+};
+
+router.addRoute('/rpc', rpcRoute(function(err, tokenData, cb) {
+  if(err) return cb(err);
+
+  // Just a simple pass-through example.
+  // This is where we'd e.g. fetch the userData from the database
+  // and pass it on to the rpc function
+
+  cb(null, tokenData);
+}));
 
 router.addRoute('/*', function(req, res, match) {
   res.end("<html><body>Main page</body></html>");
